@@ -23,9 +23,9 @@ The following files implement the baseline and two-stage extraction:
 - **data_loader.py**: Data loading from JacRED JSON files, document selection (10 stratified from dev split), few-shot example selection, domain/range constraint table construction from training data.
 - **llm_client.py**: Gemini API wrapper using `google-genai` library with Structured Outputs (`response_mime_type="application/json"` + `response_schema`), ThinkingConfig, and retry logic.
 - **prompts.py**: All prompt templates including system prompt with 35 relation types defined in Japanese, extraction prompt (baseline and recall-oriented modes), and verification prompt for Stage 2.
-- **extraction.py**: Two conditions:
+- **extraction.py**: Extraction conditions:
   - `run_baseline()`: Single LLM call extraction with post-filtering (invalid labels, invalid entity types).
-  - `run_proposed()`: Two-Stage generate+verify. Stage 1 extracts with recall-oriented prompt, Stage 2 batch-verifies candidates, then applies domain/range constraints.
+  - `run_entity_pair()`: Entity-Pair guided sequential extraction (to be implemented).
 - **evaluation.py**: Entity alignment (3-pass: exact match -> normalized match -> substring match) and micro-averaged P/R/F1 computation.
 - **schemas.py**: JSON schemas for Gemini Structured Outputs (extraction schema with entities+relations, verification schema with decisions).
 
@@ -41,10 +41,9 @@ The following files implement the baseline and two-stage extraction:
 Model: gemini-3-flash-preview (thinking_budget=0)
               Precision   Recall     F1    TP    FP    FN
 Baseline           0.26     0.16   0.20    24    70   124
-Two-Stage          0.36     0.22   0.27    32    56   116
 ```
 
-**Key issue**: Recall is very low (0.16-0.22). Most of the 148 gold relations are missed. The baseline approach extracts entities and relations together in one shot, which may cause the LLM to miss many valid entity pairs.
+**Key issue**: Recall is very low (0.16). Most of the 148 gold relations are missed. The baseline approach extracts entities and relations together in one shot, which may cause the LLM to miss many valid entity pairs.
 
 ## 4. Environment Setup
 
@@ -173,7 +172,7 @@ Extract entities first, then systematically classify relations for each entity p
 - Same P/R/F1 computation on the same 10 dev documents
 - Report per-document results and aggregate metrics
 - Also report: number of entity pairs generated, number after filtering, number of LLM calls
-- Compare: Baseline vs Two-Stage vs Entity-Pair
+- Compare: Baseline vs EntityPair
 
 ### Output Format
 
@@ -181,6 +180,5 @@ The final comparison table should look like:
 ```
               Precision   Recall     F1    TP    FP    FN
 Baseline           ...      ...    ...   ...   ...   ...
-Two-Stage          ...      ...    ...   ...   ...   ...
 EntityPair         ...      ...    ...   ...   ...   ...
 ```
