@@ -7,7 +7,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from data_loader import load_jacred, select_dev_docs, select_few_shot, build_constraint_table
+from data_loader import load_jacred, select_dev_docs, select_few_shot
 from llm_client import load_api_key, create_client
 from extraction import run_baseline
 from evaluation import align_entities, evaluate_relations, aggregate_results
@@ -65,11 +65,9 @@ def main():
     data = load_jacred()
     dev_docs = select_dev_docs(data["dev"], n=NUM_DOCS)
     few_shot = select_few_shot(data["train"])
-    constraint_table = build_constraint_table(data["train"])
 
     print(f"Dev docs: {NUM_DOCS} (stratified by size)")
     print(f"Few-shot: {few_shot['title']}")
-    print(f"Constraint table: {len(constraint_table)} relation types")
     for doc in dev_docs:
         n_ents = len(doc["vertexSet"])
         n_rels = len(doc.get("labels", []))
