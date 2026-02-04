@@ -724,6 +724,25 @@ F1        = 2 * Precision * Recall / (Precision + Recall)
 
 全ペア = 全順序付きペア数、フィルタ後 = 型制約適用後のペア数、分類呼出 = LLM分類呼び出し回数、最終トリプル = 関係ありと判定されたトリプル数
 
+### 6.4 Ablation Study: モデル構成別比較（5構成 x 10文書）
+
+以下の表は、5つのモデル構成についてBaselineとEntity-Pair手法のマイクロ平均P/R/F1を比較した結果である。全てJacRED devセットの同一10文書で評価した。
+
+| Model Config | Baseline P | Baseline R | Baseline F1 | EntityPair P | EntityPair R | EntityPair F1 | Delta F1 |
+|---|---|---|---|---|---|---|---|
+| gemini-3-flash t=2048 | 0.308 | 0.216 | 0.254 | 0.235 | 0.547 | **0.329** | +0.075 |
+| gemini-3-flash t=0 | 0.263 | 0.169 | 0.206 | 0.241 | 0.554 | **0.336** | +0.130 |
+| gemini-2.5-flash t=2048 | 0.179 | 0.162 | 0.170 | 0.113 | 0.351 | 0.171 | +0.001 |
+| gemini-2.5-flash t=0 | 0.171 | 0.142 | 0.155 | 0.199 | 0.412 | **0.268** | +0.113 |
+| gemini-2.0-flash | 0.196 | 0.149 | 0.169 | 0.083 | 0.365 | 0.135 | -0.035 |
+
+**主な知見:**
+
+- **Recallの大幅向上**: Entity-Pair手法は全構成でRecallを2〜3倍に引き上げる。これはPrecisionの低下を伴うが、Recallの改善幅がPrecisionの低下を上回るケースが多い。
+- **最高F1 = 0.336**: gemini-3-flash t=0（thinking無効）で達成。Baselineから+0.130の改善。thinkingを有効化した t=2048 よりもわずかにF1が高い結果となった。
+- **5構成中4構成でF1改善**: gemini-2.0-flash のみ Delta F1 = -0.035 とわずかに悪化。これはgemini-2.0-flashのPrecisionが極端に低下（0.083）したことが原因であり、thinkingを持たない旧世代モデルではEntity-Pair手法のバッチ分類でFalse Positiveが増加しやすいことを示唆する。
+- **モデル能力との相関**: 3-flashファミリー（より高性能なモデル）でEntity-Pair手法の効果が最も顕著であり、手法の有効性はベースモデルの関係分類能力に依存する。
+
 ---
 
 ## 7. 分析
