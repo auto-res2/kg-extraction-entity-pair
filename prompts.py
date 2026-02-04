@@ -144,3 +144,71 @@ def build_verification_prompt(
 - エンティティの型が関係と整合しているか
 - 関係の方向（head→tail）が正しいか
 根拠が不十分な候補はkeep=falseとしてください。"""
+
+
+def build_entity_only_prompt(
+    doc_text: str,
+    few_shot_text: str,
+    few_shot_entities: list[dict],
+) -> str:
+    """Build prompt for entity-only extraction (no relations)."""
+    few_shot_json = json.dumps(
+        {"entities": few_shot_entities}, ensure_ascii=False, indent=2
+    )
+
+    return f"""## タスク
+与えられた日本語文書から、エンティティ（固有表現）のみを抽出してください。関係は抽出不要です。
+
+## エンティティタイプ
+{chr(10).join(f'  - {k}: {v}' for k, v in ENTITY_TYPES_JAPANESE.items())}
+
+## 例
+入力文書:
+{few_shot_text}
+
+出力:
+{few_shot_json}
+
+## 対象文書
+{doc_text}
+
+上記の文書からすべてのエンティティを抽出してください。IDは"e0", "e1", ...の形式で付けてください。"""
+
+
+def build_pair_classification_prompt(
+    doc_text: str,
+    pairs_batch: list[dict],
+    rel_info: dict,
+) -> str:
+    """Build prompt for classifying entity pairs into relations.
+
+    Each item in pairs_batch has:
+        head_name, head_type, tail_name, tail_type, applicable_relations (list of P-codes)
+    """
+    pair_lines = []
+    for idx, pair in enumerate(pairs_batch):
+        rel_descriptions = []
+        for pcode in pair["applicable_relations"]:
+            eng_name = rel_info.get(pcode, "")
+            ja_desc = RELATION_JAPANESE.get(pcode, "")
+            rel_descriptions.append(f"    {pcode} ({eng_name}): {ja_desc}")
+
+        pair_lines.append(
+            f"ペア{idx}: {pair['head_name']}({pair['head_type']}) → {pair['tail_name']}({pair['tail_type']})\n"
+            f"  適用可能な関係:\n"
+            + "\n".join(rel_descriptions)
+        )
+
+    return f"""以下の文書と、エンティティペアのリストが与えられます。
+各ペアについて、文書に基づいて最も適切な関係を1つ選ぶか、関係がない場合は"NA"としてください。
+
+## 文書
+{doc_text}
+
+## エンティティペア
+{chr(10).join(pair_lines)}
+
+各ペアについて:
+- pair_index: ペアの番号
+- relation: 適切なPコード、または"NA"
+- evidence: 判定の根拠となる文書中のテキスト（NAの場合も簡潔に理由を記載）"""

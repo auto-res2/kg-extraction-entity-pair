@@ -4,8 +4,14 @@ from dataclasses import dataclass, field
 
 from google import genai
 
-from schemas import EXTRACTION_SCHEMA, VERIFICATION_SCHEMA
-from prompts import build_system_prompt, build_extraction_prompt, build_verification_prompt
+from schemas import EXTRACTION_SCHEMA, VERIFICATION_SCHEMA, ENTITY_ONLY_SCHEMA, PAIR_CLASSIFICATION_SCHEMA
+from prompts import (
+    build_system_prompt,
+    build_extraction_prompt,
+    build_verification_prompt,
+    build_entity_only_prompt,
+    build_pair_classification_prompt,
+)
 from llm_client import call_gemini
 from data_loader import format_few_shot_output
 
@@ -183,3 +189,120 @@ def _verify_candidates(
                 verified.append(triple)
 
     return verified
+
+
+def run_entity_pair(
+    doc: dict,
+    few_shot: dict,
+    client,
+    schema_info: dict,
+    constraint_table: dict,
+) -> tuple[list[dict], list[Triple], dict]:
+    """Entity-Pair Guided Sequential Extraction.
+
+    Steps:
+    1. Entity-only extraction
+    2. Generate all ordered (head, tail) pairs
+    3. Pre-filter using constraint_table type pairs
+    4. Batch classify pairs into relations
+    5. Collect non-NA results as Triples
+    """
+    # Step 1: Entity-only extraction
+    few_shot_output = format_few_shot_output(few_shot)
+    few_shot_entities = few_shot_output["entities"]
+
+    system_prompt = build_system_prompt(schema_info["rel_info"])
+    entity_prompt = build_entity_only_prompt(
+        doc["doc_text"], few_shot["doc_text"], few_shot_entities
+    )
+    entity_result = call_gemini(client, system_prompt, entity_prompt, ENTITY_ONLY_SCHEMA)
+    entities = entity_result.get("entities", [])
+
+    # Step 2: Generate all ordered (head, tail) pairs where head != tail
+    all_pairs = []
+    for i, head_ent in enumerate(entities):
+        for j, tail_ent in enumerate(entities):
+            if i != j:
+                all_pairs.append((head_ent, tail_ent))
+
+    total_pairs = len(all_pairs)
+
+    # Step 3: Pre-filter by valid type pairs from constraint_table
+    valid_type_pairs = set()
+    type_pair_to_relations = {}
+    for relation, type_set in constraint_table.items():
+        for h_type, t_type in type_set:
+            valid_type_pairs.add((h_type, t_type))
+            type_pair_to_relations.setdefault((h_type, t_type), []).append(relation)
+
+    filtered_pairs = []
+    for head_ent, tail_ent in all_pairs:
+        h_type = head_ent.get("type", "")
+        t_type = tail_ent.get("type", "")
+        if (h_type, t_type) in valid_type_pairs:
+            applicable = type_pair_to_relations[(h_type, t_type)]
+            filtered_pairs.append({
+                "head_id": head_ent["id"],
+                "head_name": head_ent["name"],
+                "head_type": h_type,
+                "tail_id": tail_ent["id"],
+                "tail_name": tail_ent["name"],
+                "tail_type": t_type,
+                "applicable_relations": applicable,
+            })
+
+    filtered_count = len(filtered_pairs)
+
+    # Step 4: Batch classify (groups of 20)
+    batch_size = 20
+    num_classification_calls = 0
+    triples = []
+
+    for i in range(0, len(filtered_pairs), batch_size):
+        batch = filtered_pairs[i : i + batch_size]
+        classify_prompt = build_pair_classification_prompt(
+            doc["doc_text"], batch, schema_info["rel_info"]
+        )
+        classify_system = (
+            "あなたはエンティティペア間の関係を分類する専門家です。"
+            "文書の内容に基づいて、各ペアに最も適切な関係を判定してください。"
+        )
+
+        result = call_gemini(
+            client, classify_system, classify_prompt, PAIR_CLASSIFICATION_SCHEMA
+        )
+        num_classification_calls += 1
+
+        # Step 5: Collect non-NA results
+        for decision in result.get("pair_decisions", []):
+            pair_idx = decision.get("pair_index")
+            relation = decision.get("relation", "NA")
+            evidence = decision.get("evidence", "")
+
+            if relation == "NA" or pair_idx is None or pair_idx >= len(batch):
+                continue
+
+            pair = batch[pair_idx]
+            triples.append(Triple(
+                head=pair["head_id"],
+                head_name=pair["head_name"],
+                head_type=pair["head_type"],
+                relation=relation,
+                tail=pair["tail_id"],
+                tail_name=pair["tail_name"],
+                tail_type=pair["tail_type"],
+                evidence=evidence,
+            ))
+
+    # Filter out invalid relation labels
+    valid_rels = set(schema_info["rel_info"].keys())
+    triples = filter_invalid_labels(triples, valid_rels)
+
+    stats = {
+        "total_pairs": total_pairs,
+        "filtered_pairs": filtered_count,
+        "num_classification_calls": num_classification_calls,
+        "num_triples": len(triples),
+    }
+
+    return entities, triples, stats

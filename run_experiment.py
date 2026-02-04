@@ -1,4 +1,4 @@
-"""Main experiment script: Baseline vs Proposed on JacRED dev subset."""
+"""Main experiment script: Baseline vs EntityPair on JacRED dev subset."""
 
 import json
 import sys
@@ -7,9 +7,9 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from data_loader import load_jacred, select_dev_docs, select_few_shot
+from data_loader import load_jacred, select_dev_docs, select_few_shot, build_constraint_table
 from llm_client import load_api_key, create_client
-from extraction import run_baseline
+from extraction import run_baseline, run_entity_pair
 from evaluation import align_entities, evaluate_relations, aggregate_results
 
 ENV_PATH = os.path.expanduser(
@@ -18,15 +18,27 @@ ENV_PATH = os.path.expanduser(
 NUM_DOCS = 10
 
 
-def run_condition(name, docs, few_shot, client, schema_info):
-    """Run one experimental condition on all docs."""
+def run_condition(name, docs, few_shot, client, schema_info,
+                  extraction_fn="baseline", constraint_table=None):
+    """Run one experimental condition on all docs.
+
+    Args:
+        extraction_fn: "baseline" or "entity_pair"
+        constraint_table: required when extraction_fn == "entity_pair"
+    """
     print(f"\n--- {name} ---")
     per_doc_results = []
 
     for i, doc in enumerate(docs):
         title = doc["title"]
 
-        entities, triples = run_baseline(doc, few_shot, client, schema_info)
+        if extraction_fn == "entity_pair":
+            entities, triples, ep_stats = run_entity_pair(
+                doc, few_shot, client, schema_info, constraint_table
+            )
+        else:
+            entities, triples = run_baseline(doc, few_shot, client, schema_info)
+            ep_stats = None
 
         alignment = align_entities(entities, doc["vertexSet"])
         metrics = evaluate_relations(triples, doc.get("labels", []), alignment)
@@ -45,6 +57,8 @@ def run_condition(name, docs, few_shot, client, schema_info):
             "num_entities_aligned": len(alignment),
             **metrics,
         }
+        if ep_stats is not None:
+            doc_result["entity_pair_stats"] = ep_stats
         per_doc_results.append(doc_result)
 
     agg = aggregate_results(per_doc_results)
@@ -83,23 +97,29 @@ def main():
         "rel2id": data["rel2id"],
     }
 
+    # Build constraint table from training data
+    constraint_table = build_constraint_table(data["train"])
+
     # Run conditions
     baseline_results = run_condition(
-        "Condition 1: Baseline (One-shot)", dev_docs, few_shot, client, schema_info
+        "Condition 1: Baseline (One-shot)",
+        dev_docs, few_shot, client, schema_info,
+        extraction_fn="baseline",
     )
-    # TODO: Add EntityPair condition here once run_entity_pair() is implemented
-    # entity_pair_results = run_condition_entity_pair(
-    #     "Condition 2: EntityPair", dev_docs, few_shot, client, schema_info, constraint_table
-    # )
+    entity_pair_results = run_condition(
+        "Condition 2: EntityPair",
+        dev_docs, few_shot, client, schema_info,
+        extraction_fn="entity_pair",
+        constraint_table=constraint_table,
+    )
 
     # Comparison
     b = baseline_results["aggregate"]
+    e = entity_pair_results["aggregate"]
     print("\n=== Comparison ===")
     print(f"{'':>12} {'Precision':>10} {'Recall':>8} {'F1':>6} {'TP':>5} {'FP':>5} {'FN':>5}")
     print(f"{'Baseline':>12} {b['precision']:>10.2f} {b['recall']:>8.2f} {b['f1']:>6.2f} {b['tp']:>5} {b['fp']:>5} {b['fn']:>5}")
-    # TODO: Uncomment when EntityPair is implemented
-    # e = entity_pair_results["aggregate"]
-    # print(f"{'EntityPair':>12} {e['precision']:>10.2f} {e['recall']:>8.2f} {e['f1']:>6.2f} {e['tp']:>5} {e['fp']:>5} {e['fn']:>5}")
+    print(f"{'EntityPair':>12} {e['precision']:>10.2f} {e['recall']:>8.2f} {e['f1']:>6.2f} {e['tp']:>5} {e['fp']:>5} {e['fn']:>5}")
 
     # Save results
     output = {
@@ -111,7 +131,7 @@ def main():
         },
         "conditions": {
             "baseline": baseline_results,
-            # "entity_pair": entity_pair_results,  # TODO: Add when implemented
+            "entity_pair": entity_pair_results,
         },
     }
 
